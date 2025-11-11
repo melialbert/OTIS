@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     View,
     Text,
@@ -6,6 +6,7 @@ import {
     ScrollView,
     Alert,
     TouchableOpacity,
+    ActivityIndicator,
 } from 'react-native';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -17,6 +18,9 @@ import { Colors } from '@/constants/Colors';
 import { MODULES } from '@/constants/Modules';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
+import { contentService } from '@/services/content';
+import { Lesson, Quiz } from '@/types/content.types';
+import { QuizComponent } from '@/components/quiz/QuizComponent';
 
 export default function LessonDetailScreen() {
     const { lessonId } = useLocalSearchParams();
@@ -24,6 +28,9 @@ export default function LessonDetailScreen() {
     const { user, addXP } = useUser();
     const { progress, completeActivity } = useProgress();
     const [isCompleting, setIsCompleting] = useState(false);
+    const [lessonContent, setLessonContent] = useState<Lesson | null>(null);
+    const [quizContent, setQuizContent] = useState<Quiz | null>(null);
+    const [loadingContent, setLoadingContent] = useState(true);
 
     // Trouver l'activité dans tous les modules
     let foundActivity: any = null;
@@ -56,6 +63,46 @@ export default function LessonDetailScreen() {
 
     const moduleProgress = progress[foundModule.id];
     const isCompleted = moduleProgress?.completedActivities.includes(foundActivity.id);
+
+    useEffect(() => {
+        loadContent();
+    }, [lessonId]);
+
+    const loadContent = async () => {
+        if (!foundActivity || !lessonId) return;
+
+        setLoadingContent(true);
+        try {
+            if (foundActivity.type === 'lecture' || foundActivity.type === 'video') {
+                const lesson = await contentService.getLessonByActivityId(lessonId as string);
+                setLessonContent(lesson);
+            } else if (foundActivity.type === 'quiz') {
+                const quiz = await contentService.getQuizByActivityId(lessonId as string);
+                setQuizContent(quiz);
+            }
+        } catch (error) {
+            console.error('Error loading content:', error);
+        } finally {
+            setLoadingContent(false);
+        }
+    };
+
+    const handleQuizComplete = async (score: number, passed: boolean) => {
+        if (passed && !isCompleted) {
+            await completeActivity(foundModule.id, foundActivity.id, foundActivity.xp);
+            await addXP(foundActivity.xp);
+            Alert.alert(
+                '🎉 Quiz réussi !',
+                `Vous avez obtenu ${score}% !\n\n+${foundActivity.xp} XP`,
+                [
+                    {
+                        text: 'Continuer',
+                        onPress: () => router.back(),
+                    },
+                ]
+            );
+        }
+    };
 
     const getActivityTypeInfo = () => {
         switch (foundActivity.type) {
@@ -198,80 +245,109 @@ export default function LessonDetailScreen() {
                     <View style={styles.section}>
                         <Text style={styles.sectionTitle}>📚 Contenu</Text>
 
-                        {foundActivity.type === 'lecture' && (
+                        {loadingContent ? (
                             <Card style={styles.contentCard}>
-                                <Text style={styles.contentTitle}>Introduction</Text>
-                                <Text style={styles.contentText}>
-                                    Bienvenue dans cette leçon. Le contenu détaillé sera affiché ici.
-                                    {'\n\n'}
-                                    Cette section contiendra tout le matériel pédagogique nécessaire pour
-                                    comprendre les concepts abordés.
-                                    {'\n\n'}
-                                    Prenez le temps de bien lire et assimiler les informations avant de passer
-                                    à la suite.
-                                </Text>
+                                <ActivityIndicator size="large" color={Colors.primary} />
+                                <Text style={styles.loadingText}>Chargement du contenu...</Text>
                             </Card>
-                        )}
+                        ) : (
+                            <>
+                                {(foundActivity.type === 'lecture' || foundActivity.type === 'video') && lessonContent && (
+                                    <>
+                                        {lessonContent.introduction && (
+                                            <Card style={styles.contentCard}>
+                                                <Text style={styles.contentTitle}>Introduction</Text>
+                                                <Text style={styles.contentText}>{lessonContent.introduction}</Text>
+                                            </Card>
+                                        )}
 
-                        {foundActivity.type === 'video' && (
-                            <Card style={styles.contentCard}>
-                                <View style={styles.videoPlaceholder}>
-                                    <Ionicons name="play-circle-outline" size={64} color={Colors.primary} />
-                                    <Text style={styles.videoPlaceholderText}>
-                                        Lecteur vidéo à intégrer
-                                    </Text>
-                                </View>
-                            </Card>
-                        )}
+                                        {lessonContent.sections.map((section, index) => (
+                                            <Card key={index} style={styles.contentCard}>
+                                                <Text style={styles.contentTitle}>{section.title}</Text>
+                                                <Text style={styles.contentText}>{section.content}</Text>
+                                            </Card>
+                                        ))}
 
-                        {foundActivity.type === 'quiz' && (
-                            <Card style={styles.contentCard}>
-                                <Text style={styles.contentTitle}>Quiz</Text>
-                                <Text style={styles.contentText}>
-                                    Le quiz interactif sera disponible ici.
-                                    {'\n\n'}
-                                    Vous devrez répondre à plusieurs questions pour valider vos connaissances.
-                                </Text>
-                                <Button
-                                    title="Démarrer le quiz"
-                                    onPress={() => {
-                                        Alert.alert('Quiz', 'Fonctionnalité à venir');
-                                    }}
-                                    variant="primary"
-                                />
-                            </Card>
-                        )}
+                                        {lessonContent.key_points.length > 0 && (
+                                            <Card style={styles.keyPointsCard}>
+                                                <Text style={styles.keyPointsTitle}>🎯 Points clés à retenir</Text>
+                                                {lessonContent.key_points.map((point, index) => (
+                                                    <View key={index} style={styles.keyPointItem}>
+                                                        <Text style={styles.keyPointBullet}>•</Text>
+                                                        <Text style={styles.keyPointText}>{point}</Text>
+                                                    </View>
+                                                ))}
+                                            </Card>
+                                        )}
 
-                        {foundActivity.type === 'exercise' && (
-                            <Card style={styles.contentCard}>
-                                <Text style={styles.contentTitle}>Instructions</Text>
-                                <Text style={styles.contentText}>
-                                    Suivez ces étapes pour réaliser l'exercice :
-                                    {'\n\n'}
-                                    1. Préparez votre matériel
-                                    {'\n'}
-                                    2. Suivez les consignes détaillées
-                                    {'\n'}
-                                    3. Prenez le temps nécessaire
-                                    {'\n'}
-                                    4. Soumettez votre travail
-                                    {'\n\n'}
-                                    Une fois terminé, marquez l'exercice comme complété.
-                                </Text>
-                            </Card>
-                        )}
+                                        {lessonContent.practical_tips.length > 0 && (
+                                            <Card style={styles.tipsCard}>
+                                                <Text style={styles.tipsTitle}>💡 Conseils pratiques</Text>
+                                                {lessonContent.practical_tips.map((tip, index) => (
+                                                    <View key={index} style={styles.tipItem}>
+                                                        <Text style={styles.tipBullet}>✓</Text>
+                                                        <Text style={styles.tipText}>{tip}</Text>
+                                                    </View>
+                                                ))}
+                                            </Card>
+                                        )}
+                                    </>
+                                )}
 
-                        {foundActivity.type === 'project' && (
-                            <Card style={styles.contentCard}>
-                                <Text style={styles.contentTitle}>Projet</Text>
-                                <Text style={styles.contentText}>
-                                    Ce projet vous permettra de mettre en pratique tout ce que vous avez
-                                    appris dans ce module.
-                                    {'\n\n'}
-                                    Prenez le temps de bien planifier votre travail et n'hésitez pas à
-                                    demander de l'aide si nécessaire.
-                                </Text>
-                            </Card>
+                                {foundActivity.type === 'quiz' && quizContent && (
+                                    <QuizComponent quiz={quizContent} onComplete={handleQuizComplete} />
+                                )}
+
+                                {foundActivity.type === 'quiz' && !quizContent && (
+                                    <Card style={styles.contentCard}>
+                                        <Text style={styles.contentTitle}>Quiz non disponible</Text>
+                                        <Text style={styles.contentText}>
+                                            Le contenu du quiz n'est pas encore disponible. Revenez plus tard.
+                                        </Text>
+                                    </Card>
+                                )}
+
+                                {(foundActivity.type === 'lecture' || foundActivity.type === 'video') && !lessonContent && (
+                                    <Card style={styles.contentCard}>
+                                        <Text style={styles.contentTitle}>Contenu en construction</Text>
+                                        <Text style={styles.contentText}>
+                                            Le contenu détaillé de cette leçon sera bientôt disponible.
+                                        </Text>
+                                    </Card>
+                                )}
+
+                                {foundActivity.type === 'exercise' && (
+                                    <Card style={styles.contentCard}>
+                                        <Text style={styles.contentTitle}>Instructions</Text>
+                                        <Text style={styles.contentText}>
+                                            Suivez ces étapes pour réaliser l'exercice :
+                                            {'\n\n'}
+                                            1. Préparez votre matériel
+                                            {'\n'}
+                                            2. Suivez les consignes détaillées
+                                            {'\n'}
+                                            3. Prenez le temps nécessaire
+                                            {'\n'}
+                                            4. Soumettez votre travail
+                                            {'\n\n'}
+                                            Une fois terminé, marquez l'exercice comme complété.
+                                        </Text>
+                                    </Card>
+                                )}
+
+                                {foundActivity.type === 'project' && (
+                                    <Card style={styles.contentCard}>
+                                        <Text style={styles.contentTitle}>Projet</Text>
+                                        <Text style={styles.contentText}>
+                                            Ce projet vous permettra de mettre en pratique tout ce que vous avez
+                                            appris dans ce module.
+                                            {'\n\n'}
+                                            Prenez le temps de bien planifier votre travail et n'hésitez pas à
+                                            demander de l'aide si nécessaire.
+                                        </Text>
+                                    </Card>
+                                )}
+                            </>
                         )}
                     </View>
 
@@ -319,28 +395,30 @@ export default function LessonDetailScreen() {
                     </View>
 
                     {/* Boutons d'action */}
-                    <View style={styles.actionSection}>
-                        {!isCompleted ? (
-                            <Button
-                                title={`✓ Marquer comme terminé (+${foundActivity.xp} XP)`}
-                                onPress={handleComplete}
-                                loading={isCompleting}
-                                size="large"
-                            />
-                        ) : (
-                            <View style={styles.completedSection}>
-                                <Ionicons name="checkmark-circle" size={48} color={Colors.success} />
-                                <Text style={styles.completedMessage}>
-                                    Activité terminée ! Vous avez gagné {foundActivity.xp} XP
-                                </Text>
+                    {foundActivity.type !== 'quiz' && (
+                        <View style={styles.actionSection}>
+                            {!isCompleted ? (
                                 <Button
-                                    title="Retour au module"
-                                    onPress={() => router.back()}
-                                    variant="outline"
+                                    title={`✓ Marquer comme terminé (+${foundActivity.xp} XP)`}
+                                    onPress={handleComplete}
+                                    loading={isCompleting}
+                                    size="large"
                                 />
-                            </View>
-                        )}
-                    </View>
+                            ) : (
+                                <View style={styles.completedSection}>
+                                    <Ionicons name="checkmark-circle" size={48} color={Colors.success} />
+                                    <Text style={styles.completedMessage}>
+                                        Activité terminée ! Vous avez gagné {foundActivity.xp} XP
+                                    </Text>
+                                    <Button
+                                        title="Retour au module"
+                                        onPress={() => router.back()}
+                                        variant="outline"
+                                    />
+                                </View>
+                            )}
+                        </View>
+                    )}
                 </ScrollView>
             </SafeAreaView>
         </>
@@ -510,5 +588,65 @@ const styles = StyleSheet.create({
         fontWeight: '600',
         color: Colors.text,
         textAlign: 'center',
+    },
+    loadingText: {
+        fontSize: 14,
+        color: Colors.textSecondary,
+        textAlign: 'center',
+        marginTop: 12,
+    },
+    keyPointsCard: {
+        backgroundColor: Colors.primaryLight + '15',
+        borderLeftWidth: 4,
+        borderLeftColor: Colors.primary,
+    },
+    keyPointsTitle: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: Colors.text,
+        marginBottom: 12,
+    },
+    keyPointItem: {
+        flexDirection: 'row',
+        gap: 8,
+        marginBottom: 8,
+    },
+    keyPointBullet: {
+        fontSize: 16,
+        fontWeight: '700',
+        color: Colors.primary,
+    },
+    keyPointText: {
+        flex: 1,
+        fontSize: 14,
+        color: Colors.text,
+        lineHeight: 20,
+    },
+    tipsCard: {
+        backgroundColor: Colors.warning + '15',
+        borderLeftWidth: 4,
+        borderLeftColor: Colors.warning,
+    },
+    tipsTitle: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: Colors.text,
+        marginBottom: 12,
+    },
+    tipItem: {
+        flexDirection: 'row',
+        gap: 8,
+        marginBottom: 8,
+    },
+    tipBullet: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: Colors.warning,
+    },
+    tipText: {
+        flex: 1,
+        fontSize: 14,
+        color: Colors.text,
+        lineHeight: 20,
     },
 });
